@@ -1,0 +1,226 @@
+<title>Masking Log Viewer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --panel: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --mask-bg: #fef3c7;
+    --mask-text: #92400e;
+    --unmask-bg: #dcfce7;
+    --unmask-text: #166534;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #1a1d24;
+      --text: #e8e8ea;
+      --muted: #9aa0aa;
+      --border: #2b2f3a;
+      --accent: #5b8def;
+      --mask-bg: #3f2f10;
+      --mask-text: #fbbf24;
+      --unmask-bg: #113322;
+      --unmask-text: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0;
+  }
+  header .sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  a.link, button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  a.link:hover, button:hover { color: var(--text); border-color: var(--muted); }
+  button.primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+  }
+  button.primary:hover { color: white; opacity: 0.9; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-word;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.mask { background: var(--mask-bg); color: var(--mask-text); }
+  .badge.unmask { background: var(--unmask-bg); color: var(--unmask-text); }
+  .empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .table-scroll {
+    max-height: 72vh;
+    overflow: auto;
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Masking / Unmasking Log</h1>
+      <div class="sub">Every PII masking and unmasking event, newest first.</div>
+    </div>
+    <div class="actions">
+      <a class="link" href="/">&larr; Back to chat</a>
+      <button id="refreshBtn" class="primary" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Context</th>
+            <th>Before</th>
+            <th>After</th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+      <div id="emptyState" class="empty" style="display:none;">No masking activity logged yet.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const logBody = document.getElementById("logBody");
+  const emptyState = document.getElementById("emptyState");
+  const refreshBtn = document.getElementById("refreshBtn");
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? iso : d.toLocaleString();
+  }
+
+  async function loadLogs() {
+    try {
+      const res = await fetch("/api/logs");
+      const entries = await res.json();
+      renderLogs(entries);
+    } catch (err) {
+      // Leave the previously rendered table in place on transient errors.
+    }
+  }
+
+  function renderLogs(entries) {
+    if (!entries.length) {
+      logBody.innerHTML = "";
+      emptyState.style.display = "block";
+      return;
+    }
+    emptyState.style.display = "none";
+    const rows = entries
+      .slice()
+      .reverse()
+      .map((e) => {
+        return `<tr>
+          <td class="mono">${escapeHtml(fmtTime(e.timestamp))}</td>
+          <td class="mono">${escapeHtml(e.user_id)}</td>
+          <td><span class="badge ${e.action}">${escapeHtml(e.action)}</span></td>
+          <td>${escapeHtml(e.context)}</td>
+          <td class="mono">${escapeHtml(e.before)}</td>
+          <td class="mono">${escapeHtml(e.after)}</td>
+        </tr>`;
+      })
+      .join("");
+    logBody.innerHTML = rows;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str ?? "";
+    return div.innerHTML;
+  }
+
+  refreshBtn.addEventListener("click", loadLogs);
+  loadLogs();
+  setInterval(loadLogs, 5000);
+</script>
